@@ -14,6 +14,9 @@
 #define SETTIMER 2
 #define RUNNING 3
 #define PAUSE 4
+//secondT 20times=1seconds 1200times=1minutes
+#define secondTH 0x3C
+#define secondTL 0xB0
 
 unsigned char display_ram=0;
 unsigned char display_ram_L = 0;
@@ -22,6 +25,10 @@ unsigned char Timer1Mod=0;
 __bit display_enable=1;
 __bit isButtonDown=0;
 unsigned char ACT=INIT; //current display state
+unsigned char config_set_minutes;
+unsigned char var_set_minutes;
+unsigned char running_minutes;
+unsigned int timer_t0_counter=0;
 __code unsigned char initAnimation[]={
 	/*
 	//a,d,g,f,e
@@ -86,15 +93,18 @@ void Timer1(void) __interrupt 3
 		}
 	}
 }
-void Int1(void) __interrupt 2{
-	unsigned char i;
-	//Int1 Button
-	isButtonDown = 1;
-	animationIndex=0;
-	//a little delay
-	for(i=255;i!=0;i--);
+void Timer0(void) __interrupt 1{
+	timer_t0_counter ++;
+	if(timer_t0_counter==1200){
+		//1 minutes
+		running_minutes--;
+		timer_t0_counter=0;
+	}
+	if(running_minutes==0){
+		TR0=0;
+	}
+	TH0=secondTH;TL0=secondTL;//reload secondTimer;
 }
-unsigned int click=0;
 void parseButton(){
 	if(!isButtonDown){
 		if(!P3_3){
@@ -112,20 +122,42 @@ void parseButton(){
 			//short click
 			if(ACT==IDLE){
 				ACT=RUNNING;
+				running_minutes=config_set_minutes;
+				TR0=1;//start counting timer;
+				// connect relay
+				P4_4=0;
 			}else if(ACT==SETTIMER){
 				//add ram timer
+				var_set_minutes++;
+				if(var_set_minutes>99)var_set_minutes=0;
+				animationIndex=0;//restart return timer;
 			}else if(ACT==RUNNING){
 				//pause and resume
 				ACT=PAUSE;
+				TR0=0;//pause counting timer;
+				//disconnect relay
+				P4_4=1;
 			}else if(ACT==PAUSE){
 				ACT=RUNNING;
+				TR0=1;//restart counting timer;
+				//connect relay
+				P4_4=0;
 			}
 		}else{
 			//long click
 			if(ACT==IDLE){
 				ACT=SETTIMER;
+				animationIndex=0;//restart return timer;
+				var_set_minutes=config_set_minutes; //set var timer
 			}else if(ACT==SETTIMER){
 				//save ram timer
+				config_set_minutes=var_set_minutes;
+				IAP_CMD=3;//earse eeprom
+				IAP_ADDRH=IAP_ADDRL=0;
+				IAP_TRIG=0x5A;IAP_TRIG=0xA5;
+				IAP_CMD=2;//write eeprom
+				IAP_DATA=var_set_minutes;
+				IAP_TRIG=0x5A;IAP_TRIG=0xA5;
 
 				ACT=IDLE;
 			}else if(ACT==RUNNING){
@@ -213,13 +245,38 @@ void delay1s(void){
 		for(j=255;j!=0;j--)
 			for(k=30;k!=0;k--);
 }
-
+void DisplayAct(){
+	if(ACT==INIT)return;
+	if(ACT==IDLE)DisplayNum(config_set_minutes);
+	if(ACT==RUNNING){
+		DisplayNum(running_minutes);
+		if(animationIndex%15==0){//blink
+			display_ram_L=0;
+			display_ram_R=0;
+		}
+		if(running_minutes==0){//over
+			ACT=IDLE;
+			//disconnect relay
+			P4_4=1;
+		}
+	}
+	if(ACT==PAUSE){
+		display_ram_L= 0x7C;//P
+		display_ram_R= 0x7D;//A
+	}
+	if(ACT==SETTIMER){
+		DisplayNum(var_set_minutes);
+		if(animationIndex%2==0){//blink
+			display_ram_L=0;
+			display_ram_R=0;
+		}
+		if(animationIndex==255)ACT=IDLE;//reset idle drop modify
+	}
+}
 void main(void){
-	unsigned char i;
 	P1M1=0;
 	P1M0=0x30; //0b00110000;
 	P4SW|=0x50;//0b01010000;P4.6/P4.4 as IO
-	P4_4=0;//继电器打开
 	display_ram=0x7f; //00000100;
 	//init animation
 	TMOD = 0x10; //T1 16bit timer
@@ -228,20 +285,32 @@ void main(void){
 	TH1=TL1=0;
 	TR1=1;
 	//end init animation
+	//init minute timer
+	TMOD |= 1; //T0 16bit timer
+	ET0 = 1;
+	TH0 = secondTH;
+	TL0 = secondTL;
+	TR0 = 0;
+	//end minute timer
 	//init int1 button 
 	//TCON |= 0x04; //downedge interrupt
 	//EX1=1; //Int1 interrupt enabled
 	//end init int1 button
+	//load initial data from eeprom
+	IAP_CONTR=0x83; //enable eeprom
+	IAP_CMD=1; //cmd read
+	IAP_ADDRH=IAP_ADDRL=0; //address 0
+	IAP_TRIG=0x5A;
+	IAP_TRIG=0xA5;
+	config_set_minutes=IAP_DATA;
+
 	while(1){
 		parseButton();
-		if(ACT!=INIT)
-			DisplayNum(ACT);
-		if(display_enable){
-			display_ram = display_ram_L;
-			display();
-			display_ram = display_ram_R;
-			display_ram |= 0x80;
-			display();
-		}
+		DisplayAct();
+		display_ram = display_ram_L;
+		display();
+		display_ram = display_ram_R;
+		display_ram |= 0x80;
+		display();
 	}
 }
