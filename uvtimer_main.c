@@ -1,13 +1,13 @@
 /**
-		aaaaaaa        P1_4 右侧公共正极 P1_5 左侧公共正极
-		bb   dd        P1_1 Rd    P1_2 Ra    P1_3 LRb
-		bb   dd        P1_6 Ld    P1_7 La    P0_1 Rg
-		ccccccc        P0_2 LRc   P0_3 Rf    P0_4 Re
-		ee   gg        P0_6 Lg    P0_7 Lf    P4_6 Le
-		ee   gg
-		fffffff
-0x0abcdefg
-  **/
+  aaaaaaa        P1_4 右侧公共正极 P1_5 左侧公共正极
+  bb   dd        P1_1 Rd    P1_2 Ra    P1_3 LRb
+  bb   dd        P1_6 Ld    P1_7 La    P0_1 Rg
+  ccccccc        P0_2 LRc   P0_3 Rf    P0_4 Re
+  ee   gg        P0_6 Lg    P0_7 Lf    P4_6 Le
+  ee   gg
+  fffffff
+  0x0abcdefg
+ **/
 #include <stc12.h>
 #define INIT 0
 #define IDLE 1
@@ -41,10 +41,10 @@ __code unsigned char initAnimation[]={
 	0x00,0x7f,0x00,*/
 	//a,bd,c,eg,f
 	0x40,0x28,0x10,0x05,0x02,
-	//eg,c,bd,a,abd
-	0x05,0x10,0x28,0x40,0x68,
-	//abdc,abdceg,abdcegf,0,ff,0
-	0x78,0x7D,0x7F,0x00,0x7f,0x7f,0x7f,0x00
+		//eg,c,bd,a,abd
+		0x05,0x10,0x28,0x40,0x68,
+		//abdc,abdceg,abdcegf,0,ff,0
+		0x78,0x7D,0x7F,0x00,0x7f,0x7f,0x7f,0x00
 };
 unsigned char animationIndex=0;
 
@@ -70,15 +70,14 @@ void Timer1(void) __interrupt 3
 	//Timer1 Show Animation
 	unsigned char index;
 	animationIndex++;
-	if(ACT==INIT){//Timer1Mod==0){
+	if(ACT==INIT){
 		//Initial Animation
 		if(animationIndex%5==0){
 			index=animationIndex/5-1;
 			if(index<sizeof(initAnimation)){
 				display_ram_R = display_ram_L = initAnimation[index];
 			}else{
-				//Timer1Mod=1;
-				//TR1=0;//just stop timer1
+				//Initial Animation End
 				ACT=IDLE;
 			}
 
@@ -92,6 +91,7 @@ void Timer1(void) __interrupt 3
 			display_enable=!display_enable;
 		}
 	}
+
 }
 void Timer0(void) __interrupt 1{
 	timer_t0_counter ++;
@@ -105,6 +105,63 @@ void Timer0(void) __interrupt 1{
 	}
 	TH0=secondTH;TL0=secondTL;//reload secondTimer;
 }
+void IDLE_click_short(){
+	ACT=RUNNING;
+	running_minutes=config_set_minutes;
+	TH0=secondTH;TL0=secondTL;//clear timer;
+	TR0=1;//start counting timer;
+	// connect relay
+	P4_4=0;
+}
+void IDLE_click_long(){
+	ACT=SETTIMER;
+	animationIndex=0;//restart return timer;
+	var_set_minutes=config_set_minutes; //set var timer
+}
+void SETTIMER_click_short(){
+	//add ram timer
+	var_set_minutes++;
+	if(var_set_minutes>99)var_set_minutes=0;
+	animationIndex=0;//restart return timer;
+}
+void SETTIMER_click_long(){
+	//save ram timer
+	config_set_minutes=var_set_minutes;
+	IAP_CMD=3;//earse eeprom
+	IAP_ADDRH=IAP_ADDRL=0;
+	IAP_TRIG=0x5A;IAP_TRIG=0xA5;
+	IAP_CMD=2;//write eeprom
+	IAP_DATA=var_set_minutes;
+	IAP_TRIG=0x5A;IAP_TRIG=0xA5;
+
+	ACT=IDLE;
+}
+void RUNNING_click_short(){
+	//pause and resume
+	ACT=PAUSE;
+	TR0=0;//pause counting timer;
+	//disconnect relay
+	P4_4=1;
+}
+void RUNNING_click_long(){
+	//stop
+	ACT=IDLE;
+	TR0=0;//stop timer;
+	P4_4=1;//disconnect relay;
+}
+void PAUSE_click_short(){
+	ACT=RUNNING;
+	TR0=1;//restart counting timer;
+	//connect relay
+	P4_4=0;
+}
+void PAUSE_click_long(){
+	//stop equals RUNNING_click_long();
+	ACT=IDLE;
+	TR0=0;//stop timer;
+	P4_4=1;//disconnect relay;
+}
+
 void parseButton(){
 	if(!isButtonDown){
 		if(!P3_3){
@@ -121,51 +178,24 @@ void parseButton(){
 		if(animationIndex<8){
 			//short click
 			if(ACT==IDLE){
-				ACT=RUNNING;
-				running_minutes=config_set_minutes;
-				TR0=1;//start counting timer;
-				// connect relay
-				P4_4=0;
+				IDLE_click_short();
 			}else if(ACT==SETTIMER){
-				//add ram timer
-				var_set_minutes++;
-				if(var_set_minutes>99)var_set_minutes=0;
-				animationIndex=0;//restart return timer;
+				SETTIMER_click_short();
 			}else if(ACT==RUNNING){
-				//pause and resume
-				ACT=PAUSE;
-				TR0=0;//pause counting timer;
-				//disconnect relay
-				P4_4=1;
+				RUNNING_click_short();
 			}else if(ACT==PAUSE){
-				ACT=RUNNING;
-				TR0=1;//restart counting timer;
-				//connect relay
-				P4_4=0;
+				PAUSE_click_short();
 			}
 		}else{
 			//long click
 			if(ACT==IDLE){
-				ACT=SETTIMER;
-				animationIndex=0;//restart return timer;
-				var_set_minutes=config_set_minutes; //set var timer
+				IDLE_click_long();
 			}else if(ACT==SETTIMER){
-				//save ram timer
-				config_set_minutes=var_set_minutes;
-				IAP_CMD=3;//earse eeprom
-				IAP_ADDRH=IAP_ADDRL=0;
-				IAP_TRIG=0x5A;IAP_TRIG=0xA5;
-				IAP_CMD=2;//write eeprom
-				IAP_DATA=var_set_minutes;
-				IAP_TRIG=0x5A;IAP_TRIG=0xA5;
-
-				ACT=IDLE;
+				SETTIMER_click_long();
 			}else if(ACT==RUNNING){
-				//stop
-				ACT=IDLE;
+				RUNNING_click_long();
 			}else if(ACT==PAUSE){
-				//stop
-				ACT=IDLE;
+				PAUSE_click_long();
 			}
 		}
 		isButtonDown=0;
